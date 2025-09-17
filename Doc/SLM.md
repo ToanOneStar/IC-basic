@@ -86,3 +86,98 @@ Cơ chế Attention đã thay đổi hoàn toàn lĩnh vực NLP và là thành 
 
 #### 2.3.4. Domain-specific accelerator
 **Domain-specific accelerator** là một con chip hoặc bộ xử lý được thiết kế đặc biệt để tăng tốc độ và hiệu quả năng lượng cho các tác vụ tính toán cụ thể trong một lĩnh vực (domain) nhất định. Thay vì được thiết kế để xử lý đa nhiệm như CPU hoặc GPU, chúng được tối ưu hóa cho một loại thuật toán hoặc ứng dụng cụ thể.
+
+## 3. Kiến trúc hệ thống
+
+### 3.1. CPU Controller (Khối điều khiển trung tâm)
+
+**CPU Controller** là bộ não quản lý toàn bộ hoạt động của accelerator. Nó không thực hiện các phép toán phức tạp mà tập trung vào nhiệm vụ điều phối và quản lý. 
+
+* **Nhiệm vụ chính**:
+    * **Điều khiển pipeline và luồng lệnh**: Quyết định lệnh nào sẽ được thực thi, khi nào và trên khối nào. Giống như một người quản lý dự án, nó đảm bảo các tác vụ được hoàn thành theo đúng trình tự và thời gian.
+    * **Quản lý lệnh `load/store`**: Khi mô hình cần dữ liệu (ví dụ: các ma trận trọng số) từ RAM, CPU Controller sẽ ra lệnh cho DMA Engine để nạp dữ liệu vào. Sau khi tính toán xong, nó cũng ra lệnh để lưu kết quả trở lại RAM.
+    * **Điều khiển tổng thể**: Khởi động, tạm dừng, và kết thúc quá trình xử lý, đồng thời xử lý các ngoại lệ hoặc lỗi phát sinh.
+
+### 3.2. DMA Engine (Công cụ truy cập bộ nhớ trực tiếp)
+
+**DMA Engine** là một khối chuyên dụng được thiết kế để di chuyển dữ liệu một cách hiệu quả giữa RAM và bộ nhớ trên chip (on-chip memory).
+
+* **Nhiệm vụ chính**:
+    * **Truyền dữ liệu không cần can thiệp của CPU**: Đây là điểm mấu chốt. CPU Controller chỉ cần ra lệnh một lần duy nhất cho DMA Engine về việc cần di chuyển dữ liệu nào. Sau đó, DMA Engine sẽ tự động thực hiện việc này một cách độc lập, giải phóng CPU Controller để nó có thể làm các công việc khác.
+    * **Tăng tốc độ truyền tải**: Do được tối ưu hóa cho nhiệm vụ này, DMA Engine có thể truyền một lượng lớn dữ liệu (batch data) như đầu vào của mô hình, ma trận trọng số, hoặc các kết quả trung gian nhanh hơn nhiều so với việc để CPU tự thực hiện. 
+
+### 3.3. Memory Hierarchy (Bộ nhớ phân cấp)
+
+**Memory Hierarchy** là một hệ thống các loại bộ nhớ khác nhau được tổ chức theo cấp độ để đảm bảo dữ liệu luôn có sẵn cho khối tính toán một cách nhanh nhất có thể.
+
+* **Nhiệm vụ chính**:
+    * **SRAM On-chip**: Loại bộ nhớ cực nhanh nhưng đắt đỏ và có dung lượng nhỏ, nằm ngay trên con chip. Nó được sử dụng để lưu trữ các dữ liệu "nóng" (hot data), tức là những dữ liệu thường xuyên được sử dụng, như các ma trận trọng số của lớp mạng đang được tính toán.
+    * **Cache**: Các cache nhỏ hơn (L1, L2) được đặt gần các đơn vị tính toán để lưu tạm thời những dữ liệu vừa được sử dụng, giúp truy cập lại ngay lập tức mà không cần đi xa hơn đến SRAM hay RAM.
+    * **Đảm bảo băng thông và giảm độ trễ**: Mục tiêu của hệ thống này là giảm thiểu số lần phải truy cập vào RAM chậm, vốn là nút thắt cổ chai lớn nhất trong các hệ thống tính toán.
+
+### 3.4. Accelerator
+
+**Accelerator** là trái tim của hệ thống, nơi tất cả các phép tính phức tạp của mô hình SLM được thực hiện.
+
+* **Nhiệm vụ chính**:
+    * **Xử lý Tensor**: Đây là nhiệm vụ chính của Accelerator, thực hiện các phép toán đại số tuyến tính (linear algebra) trên tensor, vốn là cấu trúc dữ liệu cơ bản của các mô hình AI.
+    * **MAC Array (Multiply-Accumulate Array)**: Là một mảng lớn các đơn vị tính toán chuyên biệt, thực hiện đồng thời hàng trăm hoặc hàng nghìn phép nhân tích lũy.
+    * **Systolic Array**: Một kiến trúc nâng cao của MAC array. Dữ liệu "chảy" qua các đơn vị tính toán một cách tuần tự, giảm thiểu việc phải di chuyển dữ liệu ra ngoài, từ đó tiết kiệm năng lượng và tăng tốc độ.
+    * **GRU Cell**: Các đơn vị xử lý phần cứng được thiết kế riêng để xử lý các phép tính phức tạp của một ô GRU, giúp tăng tốc hiệu quả các mô hình ngôn ngữ nhỏ được xây dựng trên kiến trúc này.
+
+### 3.5. Các khối mở rộng theo GPU
+
+Các khối này được tích hợp vào Accelerator để tận dụng tối đa khả năng xử lý song song, một đặc trưng của GPU.
+
+* **Warp/Thread Scheduler**:
+    * **Nhiệm vụ**: Quản lý và điều phối hàng nghìn luồng (thread) tính toán nhỏ. Nó sẽ phân chia một phép toán ma trận lớn thành nhiều luồng nhỏ và gán chúng cho các đơn vị tính toán trong Accelerator.
+    * **Hiệu quả**: Đảm bảo tất cả các đơn vị tính toán đều hoạt động hiệu quả, tránh tình trạng bị rảnh rỗi.
+
+* **SIMD/SIMT Logic**:
+    * **SIMD (Single Instruction, Multiple Data)**: Một lệnh duy nhất có thể xử lý nhiều dữ liệu cùng lúc.
+    * **SIMT (Single Instruction, Multiple Threads)**: Một khái niệm nâng cao hơn. Bộ xử lý sẽ điều khiển một nhóm các luồng (thread) để thực hiện cùng một lệnh. 
+    * **Nhiệm vụ**: Tận dụng triệt để tính song song của kiến trúc, cho phép các đơn vị tính toán thực hiện cùng một loại phép tính trên nhiều mẩu dữ liệu khác nhau.
+
+* **Multi-stage Pipeline**:
+    * **Nhiệm vụ**: Chia quá trình xử lý một lệnh thành nhiều giai đoạn (ví dụ: `Fetch`, `Decode`, `Execute`, `Write Back`).
+    * **Hiệu quả**: Trong khi một lệnh đang được thực thi ở giai đoạn `Execute`, lệnh tiếp theo đã bắt đầu ở giai đoạn `Decode`, tạo thành một "dây chuyền sản xuất" liên tục, giúp tăng thông lượng và hiệu suất tổng thể của Accelerator.
+
+## 4. Khối toán học chính
+Ba khối toán học sau là những thành phần cốt lõi của các mô hình học sâu hiện đại, đặc biệt là các mô hình ngôn ngữ như SLM.
+
+### 4.1. MAC Array (Multiply-Accumulate Array)
+
+**MAC Array** là một mảng lớn các đơn vị **MAC (Multiply-Accumulate)**, được thiết kế để thực hiện các phép toán nhân tích lũy song song trên ma trận.
+
+* **Phép toán**: Phép toán cơ bản là $a \times b + c$. Nó thực hiện phép nhân của hai số và sau đó cộng kết quả vào một số khác.
+* **Mô hình toán học**: Trong các mô hình nơ-ron, đây chính là phép nhân ma trận giữa ma trận đầu vào ($X$) và ma trận trọng số ($W$) của một lớp mạng, sau đó cộng với vector bias ($b$) để tạo ra đầu ra ($Y$). Công thức là $Y = X \times W + b$.
+* **Ứng dụng**: Đây là phép toán chiếm phần lớn thời gian tính toán trong các mô hình học sâu, từ mạng truyền thẳng (feedforward networks) cho đến các mạng phức tạp hơn. Việc thực hiện phép toán này trên một mảng song song (array) thay vì tuần tự giúp tăng tốc độ lên hàng trăm, thậm chí hàng nghìn lần.
+* **Tối ưu hóa phần cứng**: Accelerator sẽ có các MAC array lớn, có thể được tổ chức dưới dạng **systolic array**. Dữ liệu sẽ "chảy" qua các đơn vị tính toán một cách liên tục, giảm thiểu việc truy cập bộ nhớ, từ đó tiết kiệm năng lượng và tăng hiệu quả. 
+
+### 4.2. GRU/LSTM Unit với LUT Sigmoid/Tanh
+
+Các đơn vị **GRU** và **LSTM** là các thành phần của mạng nơ-ron hồi quy, được thiết kế để xử lý các chuỗi dữ liệu và ghi nhớ thông tin dài hạn.
+
+* **Phép toán**: Các đơn vị này sử dụng nhiều phép nhân ma trận và vector, cùng với các hàm kích hoạt phi tuyến tính như **sigmoid** ($\sigma$) và **tanh**.
+    * **GRU**: Công thức bao gồm các phép toán cho cổng cập nhật ($z$) và cổng đặt lại ($r$), cùng với việc tính toán trạng thái ẩn mới ($h_t$).
+        * $z_t = \sigma(W_z x_t + U_z h_{t-1})$
+        * $r_t = \sigma(W_r x_t + U_r h_{t-1})$
+        * $\tilde{h}_t = \tanh(W x_t + U(r_t \odot h_{t-1}))$
+        * $h_t = (1-z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t$
+    * **LSTM**: Cấu trúc tương tự nhưng phức tạp hơn với cổng quên ($f$), cổng đầu vào ($i$), và cổng đầu ra ($o$).
+* **Tối ưu hóa phần cứng**:
+    * **Tăng tốc phép nhân ma trận**: Các phép toán nhân ma trận-vector có thể được xử lý hiệu quả trên MAC array.
+    * **Bảng tra cứu (Lookup Table - LUT)**: Đây là một kỹ thuật tối ưu quan trọng. Thay vì phải tính toán các hàm phi tuyến tính phức tạp như sigmoid và tanh, phần cứng sẽ lưu trữ các giá trị của hàm này trong một bảng tra cứu. Khi cần, nó chỉ cần tra cứu kết quả, giúp tiết kiệm thời gian và tài nguyên tính toán đáng kể so với việc tính toán trực tiếp.
+
+### 4.3. Attention Block (Dot Product + Softmax)
+
+**Cơ chế Attention** là một khối toán học quan trọng trong các mô hình ngôn ngữ dựa trên kiến trúc **Transformer**. Nó cho phép mô hình tập trung vào các phần có ý nghĩa nhất của dữ liệu đầu vào.
+
+* **Phép toán**:
+    * **Phép nhân vô hướng (Dot Product)**: Đây là phép toán cốt lõi. Mô hình tính toán "sự tương đồng" giữa các vector truy vấn (query) và các vector khóa (key) bằng cách nhân vô hướng chúng.
+        * $Attention(Q, K, V) = \text{softmax}(\frac{QK^T}{\sqrt{d_k}})V$
+    * **Softmax**: Sau khi tính toán ma trận điểm số (score matrix) từ phép nhân vô hướng, hàm softmax được áp dụng để chuyển các điểm số thành các trọng số có tổng bằng 1, biểu thị mức độ quan trọng của từng vector đầu vào.
+* **Tối ưu hóa phần cứng**:
+    * **Tăng tốc Dot Product**: Phép toán này cũng là một dạng phép nhân ma trận, có thể được thực hiện hiệu quả trên MAC array hoặc systolic array.
+    * **Tối ưu Softmax**: Tương tự như sigmoid/tanh, hàm softmax cũng có thể được tối ưu hóa bằng cách sử dụng bảng tra cứu (LUT) hoặc các mạch logic chuyên biệt để tăng tốc độ tính toán.
+    * **Tối ưu băng thông**: Các phép toán Attention đòi hỏi rất nhiều lần truy cập dữ liệu (vector Q, K, V), vì vậy việc tối ưu băng thông bộ nhớ và giảm thiểu việc di chuyển dữ liệu là cực kỳ quan trọng đối với hiệu quả năng lượng và độ trễ.
