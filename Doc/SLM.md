@@ -1,4 +1,4 @@
-# Thiết kế CPU/GPU cho ứng dụng Mô hình Ngôn ngữ nhỏ (SLM)
+# Thiết kế CPU/GPU cho ứng dụng Mô hình Ngôn ngữ nhỏ (SLMM)
 ## 1. Tìm hiểu về SLM
 **Mô hình ngôn ngữ nhỏ (SLM)** là các mô hình AI có số lượng tham số ít hơn đáng kể so với các mô hình ngôn ngữ lớn (LLM). Thay vì được đào tạo trên lượng dữ liệu khổng lồ và thực hiện các tác vụ đa năng, SLM tập trung vào một hoặc một vài nhiệm vụ cụ thể.
 
